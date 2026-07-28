@@ -1,0 +1,141 @@
+package auth
+
+import (
+	"crypto/subtle"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/golang-jwt/jwt/v5"
+	echojwt "github.com/labstack/echo-jwt/v4"
+	"github.com/labstack/echo/v4"
+
+	"github.com/mehrdad-masoumi/go-packages/apperr"
+)
+
+const ClaimsKey = "claims"
+
+type Claims struct {
+	UserID     string   `json:"user_id"`
+	Roles      []string `json:"roles"`
+	FullAccess bool     `json:"full_access"`
+	jwt.RegisteredClaims
+}
+
+type flexibleClaims struct {
+	UserID     interface{} `json:"user_id"`
+	Roles      []string    `json:"roles"`
+	FullAccess bool        `json:"full_access"`
+	jwt.RegisteredClaims
+}
+
+func ParseAccessToken(tokenStr, secret string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &flexibleClaims{}, func(t *jwt.Token) (interface{}, error) {
+		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, errors.New("unexpected signing method")
+		}
+		return []byte(secret), nil
+	})
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, apperr.New("auth.ParseToken").
+				WithKind(apperr.KindUnauthenticated).
+				WithMessage("token expired")
+		}
+		return nil, apperr.New("auth.ParseToken").
+			WithKind(apperr.KindUnauthenticated).
+			WithMessage("invalid token")
+	}
+
+	fc, ok := token.Claims.(*flexibleClaims)
+	if !ok || !token.Valid {
+		return nil, apperr.New("auth.ParseToken").
+			WithKind(apperr.KindUnauthenticated).
+			WithMessage("invalid token")
+	}
+
+	claims := &Claims{
+		Roles:            fc.Roles,
+		FullAccess:       fc.FullAccess,
+		RegisteredClaims: fc.RegisteredClaims,
+	}
+	switch v := fc.UserID.(type) {
+	case string:
+		claims.UserID = v
+	case float64:
+		claims.UserID = fmt.Sprintf("%.0f", v)
+	default:
+		return nil, apperr.New("auth.ParseToken").
+			WithKind(apperr.KindUnauthenticated).
+			WithMessage("invalid token")
+	}
+	return claims, nil
+}
+
+func JWTMiddleware(secret string) echo.MiddlewareFunc {
+	return echojwt.WithConfig(echojwt.Config{
+		ContextKey:    ClaimsKey,
+		SigningKey:    []byte(secret),
+		SigningMethod: "HS256",
+		TokenLookup:   "header:Authorization:Bearer ,cookie:access_token,cookie:admin_access_token",
+		ParseTokenFunc: func(_ echo.Context, authHeader string) (interface{}, error) {
+			return ParseAccessToken(authHeader, secret)
+		},
+	})
+}
+
+func GetClaims(c echo.Context) (*Claims, error) {
+	v := c.Get(ClaimsKey)
+	if v == nil {
+		return nil, apperr.New("auth.GetClaims").
+			WithKind(apperr.KindUnauthenticated).
+			WithMessage("unauthenticated")
+	}
+	claims, ok := v.(*Claims)
+	if !ok || claims == nil || claims.UserID == "" {
+		return nil, apperr.New("auth.GetClaims").
+			WithKind(apperr.KindUnauthenticated).
+			WithMessage("unauthenticated")
+	}
+	return claims, nil
+}
+
+func RequireAdmin(adminRoles []string) echo.MiddlewareFunc {
+	roleSet := map[string]struct{}{}
+	for _, r := range adminRoles {
+		roleSet[strings.ToLower(r)] = struct{}{}
+	}
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			claims, err := GetClaims(c)
+			if err != nil {
+				return err
+			}
+			if claims.FullAccess {
+				return next(c)
+			}
+			for _, r := range claims.Roles {
+				if _, ok := roleSet[strings.ToLower(r)]; ok {
+					return next(c)
+				}
+			}
+			return apperr.New("auth.RequireAdmin").
+				WithKind(apperr.KindForbidden).
+				WithMessage("forbidden")
+		}
+	}
+}
+
+func InternalAPIKey(expected string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			got := c.Request().Header.Get("X-Internal-Api-Key")
+			if expected == "" || subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
+				return apperr.New("auth.InternalAPIKey").
+					WithKind(apperr.KindUnauthenticated).
+					WithMessage("invalid internal api key")
+			}
+			return next(c)
+		}
+	}
+}
