@@ -50,8 +50,8 @@ type Client interface {
 }
 ```
 
-- `Send` → `POST {BaseURL}/internal/v1/notifications` (known user, rendered from a template).
-- `SendDirect` → `POST {BaseURL}/internal/v1/direct-notifications` (explicit recipient, bypasses user lookup).
+- `Send` → `POST {BaseURL}/internal/v1/notifications` (known user + caller-provided `Contacts`, rendered from a template).
+- `SendDirect` → `POST {BaseURL}/internal/v1/direct-notifications` (explicit recipient for OTP / pre-user flows).
 - Every request carries `X-Internal-Api-Key: {Config.APIKey}`.
 - Request timeout comes from `Config.Timeout` (default 10s); the caller's `context.Context` is always respected (cancellation/deadline aborts the in-flight request).
 - **This client performs NO automatic retry of the whole request.** A single HTTP call is made per `Send`/`SendDirect` invocation. Callers that need retries must implement their own backoff using a stable `IdempotencyKey`.
@@ -120,7 +120,7 @@ import (
 
 // Called by an outbox worker after a withdrawal-approved event has been
 // durably persisted — not inline with the approval transaction itself.
-func notifyWithdrawalApproved(ctx context.Context, client notificationclient.Client, userID, amount, currency string) error {
+func notifyWithdrawalApproved(ctx context.Context, client notificationclient.Client, userID, amount, currency string, contacts *notificationclient.Contacts) error {
 	_, err := client.Send(ctx, notificationclient.Command{
 		IdempotencyKey: "withdrawal_approved:" + userID + ":" + amount, // stable per event
 		UserID:         userID,
@@ -128,6 +128,7 @@ func notifyWithdrawalApproved(ctx context.Context, client notificationclient.Cli
 		Locale:         "en",
 		Channels:       []string{"sms", "email"},
 		Priority:       "high",
+		Contacts:       contacts,
 		Variables: map[string]any{
 			"amount":   amount,
 			"currency": currency,
