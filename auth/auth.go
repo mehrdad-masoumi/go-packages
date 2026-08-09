@@ -28,6 +28,8 @@ type flexibleClaims struct {
 	jwt.RegisteredClaims
 }
 
+// ParseAccessToken validates an HS256 access token with a shared secret.
+// Deprecated: use Verifier.Verify with EdDSA/JWKS. Kept for tests and emergency fallbacks.
 func ParseAccessToken(tokenStr, secret string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &flexibleClaims{}, func(t *jwt.Token) (interface{}, error) {
 		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
@@ -71,7 +73,9 @@ func ParseAccessToken(tokenStr, secret string) (*Claims, error) {
 	return claims, nil
 }
 
-func JWTMiddleware(secret string) echo.MiddlewareFunc {
+// JWTMiddlewareHS256 is the legacy shared-secret middleware.
+// Deprecated: use JWTMiddleware with a Verifier.
+func JWTMiddlewareHS256(secret string) echo.MiddlewareFunc {
 	return echojwt.WithConfig(echojwt.Config{
 		ContextKey:    ClaimsKey,
 		SigningKey:    []byte(secret),
@@ -83,14 +87,25 @@ func JWTMiddleware(secret string) echo.MiddlewareFunc {
 	})
 }
 
+// JWTMiddleware validates Bearer/cookie access tokens using the shared Verifier (EdDSA/JWKS).
+func JWTMiddleware(v TokenVerifier) echo.MiddlewareFunc {
+	return echojwt.WithConfig(echojwt.Config{
+		ContextKey:  ClaimsKey,
+		TokenLookup: "header:Authorization:Bearer ,cookie:access_token,cookie:admin_access_token",
+		ParseTokenFunc: func(c echo.Context, authHeader string) (interface{}, error) {
+			return v.Verify(c.Request().Context(), authHeader)
+		},
+	})
+}
+
 func GetClaims(c echo.Context) (*Claims, error) {
-	v := c.Get(ClaimsKey)
-	if v == nil {
+	val := c.Get(ClaimsKey)
+	if val == nil {
 		return nil, apperr.New("auth.GetClaims").
 			WithKind(apperr.KindUnauthenticated).
 			WithMessage("unauthenticated")
 	}
-	claims, ok := v.(*Claims)
+	claims, ok := val.(*Claims)
 	if !ok || claims == nil || claims.UserID == "" {
 		return nil, apperr.New("auth.GetClaims").
 			WithKind(apperr.KindUnauthenticated).
