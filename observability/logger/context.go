@@ -37,7 +37,8 @@ func contextAttrs(ctx context.Context) []any {
 
 	span := trace.SpanFromContext(ctx)
 	sc := span.SpanContext()
-	if sc.IsValid() {
+	hasOTel := sc.IsValid()
+	if hasOTel {
 		attrs = append(attrs,
 			"trace_id", sc.TraceID().String(),
 			"span_id", sc.SpanID().String(),
@@ -45,7 +46,20 @@ func contextAttrs(ctx context.Context) []any {
 	}
 
 	if extra, ok := ctx.Value(extraAttrsKey{}).([]any); ok && len(extra) > 0 {
-		attrs = append(attrs, extra...)
+		// Skip duplicate trace_id from message headers when OTel already set it.
+		if hasOTel {
+			filtered := make([]any, 0, len(extra))
+			for i := 0; i+1 < len(extra); i += 2 {
+				key, ok := extra[i].(string)
+				if ok && key == "trace_id" {
+					continue
+				}
+				filtered = append(filtered, extra[i], extra[i+1])
+			}
+			attrs = append(attrs, filtered...)
+		} else {
+			attrs = append(attrs, extra...)
+		}
 	}
 
 	return attrs
