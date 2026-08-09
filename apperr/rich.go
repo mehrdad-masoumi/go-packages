@@ -1,6 +1,9 @@
 package apperr
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 type Kind int
 
@@ -20,7 +23,8 @@ type RichError struct {
 	kind         Kind
 }
 
-func (r *RichError) Error() string {
+// Message returns the client-facing message (without the wrapped cause).
+func (r *RichError) Message() string {
 	if r == nil {
 		return "nil richerror"
 	}
@@ -28,7 +32,40 @@ func (r *RichError) Error() string {
 		return r.message
 	}
 	if r.wrappedError != nil {
+		var inner *RichError
+		if errors.As(r.wrappedError, &inner) {
+			return inner.Message()
+		}
 		return r.wrappedError.Error()
+	}
+	return "unknown error"
+}
+
+// Error returns a full chain for logs: op: message: cause.
+func (r *RichError) Error() string {
+	if r == nil {
+		return "nil richerror"
+	}
+
+	var b string
+	if r.operation != "" {
+		b = r.operation
+	}
+	if r.message != "" {
+		if b != "" {
+			b += ": "
+		}
+		b += r.message
+	}
+	if r.wrappedError != nil {
+		cause := r.wrappedError.Error()
+		if b != "" {
+			return b + ": " + cause
+		}
+		return cause
+	}
+	if b != "" {
+		return b
 	}
 	return "unknown error"
 }
@@ -78,4 +115,24 @@ func (r *RichError) Op() string {
 		return ""
 	}
 	return r.operation
+}
+
+// KindString returns a stable label for logs.
+func (k Kind) String() string {
+	switch k {
+	case KindInvalid:
+		return "invalid"
+	case KindForbidden:
+		return "forbidden"
+	case KindNotFound:
+		return "not_found"
+	case KindUnexpected:
+		return "unexpected"
+	case KindUnauthenticated:
+		return "unauthenticated"
+	case KindTooManyRequests:
+		return "too_many_requests"
+	default:
+		return fmt.Sprintf("kind_%d", int(k))
+	}
 }

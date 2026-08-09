@@ -20,7 +20,9 @@ func Handler(err error, c echo.Context) {
 
 	var ve *Error
 	if errors.As(err, &ve) {
-		_ = c.JSON(http.StatusUnprocessableEntity, errorBody{
+		status := http.StatusUnprocessableEntity
+		logHTTPError(c, status, err)
+		_ = c.JSON(status, errorBody{
 			Message: "validation failed",
 			Fields:  ve.Fields,
 		})
@@ -29,7 +31,9 @@ func Handler(err error, c echo.Context) {
 
 	var re *RichError
 	if errors.As(err, &re) {
-		_ = c.JSON(statusFromKind(re.Kind()), errorBody{Message: re.Error()})
+		status := statusFromKind(re.Kind())
+		logHTTPError(c, status, err)
+		_ = c.JSON(status, errorBody{Message: re.Message()})
 		return
 	}
 
@@ -38,11 +42,41 @@ func Handler(err error, c echo.Context) {
 		if m, ok := he.Message.(string); ok {
 			msg = m
 		}
+		logHTTPError(c, he.Code, err)
 		_ = c.JSON(he.Code, errorBody{Message: msg})
 		return
 	}
 
+	logHTTPError(c, http.StatusInternalServerError, err)
 	_ = c.JSON(http.StatusInternalServerError, errorBody{Message: "internal server error"})
+}
+
+func logHTTPError(c echo.Context, status int, err error) {
+	// Access log already carries 4xx; only surface causes that need ops attention.
+	if status < http.StatusInternalServerError || err == nil {
+		return
+	}
+
+	rid := c.Response().Header().Get(echo.HeaderXRequestID)
+	req := c.Request()
+
+	var re *RichError
+	if errors.As(err, &re) {
+		cause := ""
+		if w := re.Unwrap(); w != nil {
+			cause = w.Error()
+		}
+		c.Logger().Errorf(
+			"request failed id=%s method=%s uri=%s status=%d op=%s kind=%s message=%q cause=%q",
+			rid, req.Method, req.RequestURI, status, re.Op(), re.Kind().String(), re.Message(), cause,
+		)
+		return
+	}
+
+	c.Logger().Errorf(
+		"request failed id=%s method=%s uri=%s status=%d err=%v",
+		rid, req.Method, req.RequestURI, status, err,
+	)
 }
 
 func statusFromKind(k Kind) int {

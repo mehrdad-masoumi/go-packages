@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"strings"
@@ -122,20 +121,6 @@ func RequireAdmin(adminRoles []string) echo.MiddlewareFunc {
 			return apperr.New("auth.RequireAdmin").
 				WithKind(apperr.KindForbidden).
 				WithMessage("forbidden")
-		}
-	}
-}
-
-func InternalAPIKey(expected string) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			got := c.Request().Header.Get("X-Internal-Api-Key")
-			if expected == "" || subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
-				return apperr.New("auth.InternalAPIKey").
-					WithKind(apperr.KindUnauthenticated).
-					WithMessage("invalid internal api key")
-			}
-			return next(c)
 		}
 	}
 }
