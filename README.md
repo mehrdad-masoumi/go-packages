@@ -10,6 +10,7 @@ Shared Go libraries for broker microservices.
 |----------------|-------------|
 | `apperr` | Application errors: rich errors, validation (422), Echo HTTP handler |
 | `httpserver` | Shared Echo setup + `/health-check` `/ready` + Prometheus `/metrics` |
+| `observability/logger` | Structured JSON logs to stdout with OTel/request_id enrichment |
 | `auth` | JWT middleware, claims helpers |
 | `db` | Postgres connect + sql-migrate helpers |
 | `outbox` | Transactional outbox relay loop (`Store` + confirmed `Publisher`) |
@@ -28,12 +29,8 @@ import "github.com/mehrdad-masoumi/go-packages/apperr"
 
 ## Local development
 
-In the micro-service monorepo:
-
-```
-replace github.com/mehrdad-masoumi/go-packages => ../utils/go-packages
-```
-
+Publish a semver tag and consume it from services (`go get` / `go mod tidy`).
+Do **not** use a local `replace` directive.
 ## Outbox
 
 Services keep domain claim/mark SQL in their repository. The shared relay only needs a thin adapter:

@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/mehrdad-masoumi/go-packages/observability/logger"
 )
 
 type errorBody struct {
@@ -57,26 +59,54 @@ func logHTTPError(c echo.Context, status int, err error) {
 		return
 	}
 
-	rid := c.Response().Header().Get(echo.HeaderXRequestID)
 	req := c.Request()
+	ctx := req.Context()
+	args := []any{
+		"method", req.Method,
+		"path", req.URL.Path,
+		"status", status,
+		"error_code", Code(err),
+		"error", err.Error(),
+	}
 
 	var re *RichError
 	if errors.As(err, &re) {
-		cause := ""
-		if w := re.Unwrap(); w != nil {
-			cause = w.Error()
-		}
-		c.Logger().Errorf(
-			"request failed id=%s method=%s uri=%s status=%d op=%s kind=%s message=%q cause=%q",
-			rid, req.Method, req.RequestURI, status, re.Op(), re.Kind().String(), re.Message(), cause,
-		)
-		return
+		args = append(args, "op", re.Op(), "kind", re.Kind().String())
 	}
+	logger.Error(ctx, "request failed", args...)
+}
 
-	c.Logger().Errorf(
-		"request failed id=%s method=%s uri=%s status=%d err=%v",
-		rid, req.Method, req.RequestURI, status, err,
-	)
+// Code returns a stable machine-readable error_code for logs/metrics.
+func Code(err error) string {
+	if err == nil {
+		return ""
+	}
+	var ve *Error
+	if errors.As(err, &ve) && ve != nil {
+		return "VALIDATION_FAILED"
+	}
+	var re *RichError
+	if errors.As(err, &re) && re != nil {
+		return "APP_" + kindUpper(re.Kind())
+	}
+	return "UNEXPECTED"
+}
+
+func kindUpper(k Kind) string {
+	switch k {
+	case KindInvalid:
+		return "INVALID"
+	case KindForbidden:
+		return "FORBIDDEN"
+	case KindNotFound:
+		return "NOT_FOUND"
+	case KindUnauthenticated:
+		return "UNAUTHENTICATED"
+	case KindTooManyRequests:
+		return "TOO_MANY_REQUESTS"
+	default:
+		return "UNEXPECTED"
+	}
 }
 
 func statusFromKind(k Kind) int {

@@ -12,6 +12,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.13.0
 	github.com/rubenv/sql-migrate v1.8.0
 	github.com/stretchr/testify v1.11.1
+	go.opentelemetry.io/otel/trace v1.38.0
 )
 
 require (
@@ -30,6 +31,7 @@ require (
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
+	go.opentelemetry.io/otel v1.38.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
