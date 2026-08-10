@@ -157,6 +157,7 @@ func (c *Client) PublishWithConfirmHeaders(ctx context.Context, exchange, routin
 	}
 	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
 
+	ctx = tracing.ExtractFromJSONCarrier(ctx, body)
 	ctx, span, headers := tracing.StartProducerSpan(ctx, exchange, routingKey, headers)
 	var pubErr error
 	defer func() { tracing.EndSpan(span, pubErr) }()
