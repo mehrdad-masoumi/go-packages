@@ -8,6 +8,8 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"github.com/mehrdad-masoumi/go-packages/observability/tracing"
 )
 
 const defaultConfirmTimeout = 5 * time.Second
@@ -137,8 +139,13 @@ func (c *Client) SetupTopology() error {
 	return c.setup(ch)
 }
 
-// PublishWithConfirm publishes with publisher confirms.
+// PublishWithConfirm publishes with publisher confirms and injects W3C trace headers.
 func (c *Client) PublishWithConfirm(ctx context.Context, exchange, routingKey string, body []byte) error {
+	return c.PublishWithConfirmHeaders(ctx, exchange, routingKey, body, nil)
+}
+
+// PublishWithConfirmHeaders publishes with confirms, merges headers, and injects W3C trace context.
+func (c *Client) PublishWithConfirmHeaders(ctx context.Context, exchange, routingKey string, body []byte, headers amqp.Table) error {
 	ch, err := c.Channel()
 	if err != nil {
 		return err
@@ -150,6 +157,10 @@ func (c *Client) PublishWithConfirm(ctx context.Context, exchange, routingKey st
 	}
 	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
 
+	ctx, span, headers := tracing.StartProducerSpan(ctx, exchange, routingKey, headers)
+	var pubErr error
+	defer func() { tracing.EndSpan(span, pubErr) }()
+
 	pubCtx, cancel := context.WithTimeout(ctx, c.confirmTimeout)
 	defer cancel()
 
@@ -158,19 +169,24 @@ func (c *Client) PublishWithConfirm(ctx context.Context, exchange, routingKey st
 		DeliveryMode: amqp.Persistent,
 		Body:         body,
 		Timestamp:    time.Now().UTC(),
+		Headers:      headers,
 	}); err != nil {
+		pubErr = err
 		return err
 	}
 
 	select {
 	case <-pubCtx.Done():
-		return pubCtx.Err()
+		pubErr = pubCtx.Err()
+		return pubErr
 	case conf, ok := <-confirms:
 		if !ok {
-			return fmt.Errorf("confirm channel closed")
+			pubErr = fmt.Errorf("confirm channel closed")
+			return pubErr
 		}
 		if !conf.Ack {
-			return fmt.Errorf("publish nacked")
+			pubErr = fmt.Errorf("publish nacked")
+			return pubErr
 		}
 		return nil
 	}

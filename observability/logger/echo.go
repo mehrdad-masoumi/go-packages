@@ -25,8 +25,15 @@ func RequestIDMiddleware() echo.MiddlewareFunc {
 	}
 }
 
+// skipAccessLogPaths are probe/infra routes that should not emit access logs.
+var skipAccessLogPaths = map[string]struct{}{
+	"/health-check": {},
+	"/ready":        {},
+}
+
 // HTTPMiddleware writes one structured JSON access log per request.
 // Skips Authorization, cookies, and bodies by design.
+// Also skips /health-check and /ready to avoid probe noise.
 func HTTPMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -34,6 +41,10 @@ func HTTPMiddleware() echo.MiddlewareFunc {
 			err := next(c)
 			req := c.Request()
 			res := c.Response()
+
+			if _, skip := skipAccessLogPaths[req.URL.Path]; skip {
+				return err
+			}
 
 			status := res.Status
 			if err != nil {

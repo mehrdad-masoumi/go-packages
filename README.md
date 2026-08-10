@@ -7,14 +7,15 @@ Shared Go libraries for broker microservices.
 ## Packages
 
 | Package | Description |
-|----------------|-------------|
+|---------|-------------|
 | `apperr` | Application errors: rich errors, validation (422), Echo HTTP handler |
-| `httpserver` | Shared Echo setup + `/health-check` `/ready` + Prometheus `/metrics` |
+| `httpserver` | Shared Echo setup + `/health-check` `/ready` + Prometheus `/metrics` + OTel HTTP middleware |
 | `observability/logger` | Structured JSON logs to stdout with OTel/request_id enrichment |
+| `observability/tracing` | OpenTelemetry init, Echo/gRPC/HTTP/RabbitMQ helpers, W3C propagation |
 | `auth` | JWT middleware, claims helpers |
-| `db` | Postgres connect + sql-migrate helpers |
+| `db` | Postgres connect (otelsql) + sql-migrate helpers |
 | `outbox` | Transactional outbox relay loop (`Store` + confirmed `Publisher`) |
-| `rabbitmq` | Reconnecting AMQP client + confirmed publish (topology via callback) |
+| `rabbitmq` | Reconnecting AMQP client + confirmed publish with trace injection |
 | `sharederrors` | Common sentinel errors (`ErrNotFound`, `ErrAlreadyExists`, …) |
 
 ## Install

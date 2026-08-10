@@ -4,11 +4,17 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
+	"github.com/XSAM/otelsql"
 	migrate "github.com/rubenv/sql-migrate"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
+
+var registerOtelOnce sync.Once
+var otelDriverName = "postgres"
 
 type Options struct {
 	MaxOpenConns int
@@ -71,7 +77,8 @@ func replaceDBName(dsn, newDB string) string {
 }
 
 func Connect(dsn string, opts ...Options) (*sqlx.DB, error) {
-	db, err := sqlx.Connect("postgres", dsn)
+	driver := instrumentedPostgresDriver()
+	db, err := sqlx.Connect(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
@@ -88,6 +95,24 @@ func Connect(dsn string, opts ...Options) (*sqlx.DB, error) {
 	db.SetMaxOpenConns(opt.MaxOpenConns)
 	db.SetMaxIdleConns(opt.MaxIdleConns)
 	return db, nil
+}
+
+func instrumentedPostgresDriver() string {
+	registerOtelOnce.Do(func() {
+		name, err := otelsql.Register("postgres",
+			otelsql.WithAttributes(semconv.DBSystemPostgreSQL),
+			otelsql.WithSpanOptions(otelsql.SpanOptions{
+				DisableErrSkip: true,
+			}),
+		)
+		if err != nil {
+			// Fall back to the plain driver if registration fails.
+			otelDriverName = "postgres"
+			return
+		}
+		otelDriverName = name
+	})
+	return otelDriverName
 }
 
 func RunMigrations(db *sqlx.DB, dir string) error {

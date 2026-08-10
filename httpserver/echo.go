@@ -9,6 +9,7 @@ import (
 
 	"github.com/mehrdad-masoumi/go-packages/apperr"
 	"github.com/mehrdad-masoumi/go-packages/observability/logger"
+	"github.com/mehrdad-masoumi/go-packages/observability/tracing"
 )
 
 // EchoOptions configures shared Echo middleware.
@@ -32,6 +33,8 @@ func NewEchoWithOptions(opts EchoOptions) *echo.Echo {
 	e.HTTPErrorHandler = apperr.Handler
 	e.Use(middleware.Recover())
 	e.Use(logger.RequestIDMiddleware())
+	serviceName := firstNonEmpty(os.Getenv("OTEL_SERVICE_NAME"), os.Getenv("SERVICE_NAME"), "http")
+	e.Use(tracing.EchoMiddleware(serviceName))
 	if !opts.DisableAccessLog {
 		e.Use(logger.HTTPMiddleware())
 	}
