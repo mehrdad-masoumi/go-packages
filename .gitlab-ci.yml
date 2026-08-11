@@ -1,0 +1,8 @@
+stages: [test]
+
+go-packages:
+  stage: test
+  image: golang:1.24
+  script:
+    - chmod +x scripts/check.sh
+    - ./scripts/check.sh
