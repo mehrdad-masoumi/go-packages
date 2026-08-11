@@ -15,16 +15,18 @@ import (
 const ClaimsKey = "claims"
 
 type Claims struct {
-	UserID     string   `json:"user_id"`
-	Roles      []string `json:"roles"`
-	FullAccess bool     `json:"full_access"`
+	UserID      string   `json:"user_id"`
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions,omitempty"`
+	FullAccess  bool     `json:"full_access"`
 	jwt.RegisteredClaims
 }
 
 type flexibleClaims struct {
-	UserID     interface{} `json:"user_id"`
-	Roles      []string    `json:"roles"`
-	FullAccess bool        `json:"full_access"`
+	UserID      interface{} `json:"user_id"`
+	Roles       []string    `json:"roles"`
+	Permissions []string    `json:"permissions"`
+	FullAccess  bool        `json:"full_access"`
 	jwt.RegisteredClaims
 }
 
@@ -57,6 +59,7 @@ func ParseAccessToken(tokenStr, secret string) (*Claims, error) {
 
 	claims := &Claims{
 		Roles:            fc.Roles,
+		Permissions:      fc.Permissions,
 		FullAccess:       fc.FullAccess,
 		RegisteredClaims: fc.RegisteredClaims,
 	}
@@ -138,4 +141,63 @@ func RequireAdmin(adminRoles []string) echo.MiddlewareFunc {
 				WithMessage("forbidden")
 		}
 	}
+}
+
+// RequirePermission allows the request when claims.FullAccess is set or the
+// caller holds any of the required permission keys in claims.Permissions.
+func RequirePermission(keys ...string) echo.MiddlewareFunc {
+	required := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		required[k] = struct{}{}
+	}
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			claims, err := GetClaims(c)
+			if err != nil {
+				return err
+			}
+			if claims.FullAccess {
+				return next(c)
+			}
+			if len(required) == 0 {
+				return apperr.New("auth.RequirePermission").
+					WithKind(apperr.KindForbidden).
+					WithMessage("forbidden")
+			}
+			for _, p := range claims.Permissions {
+				if _, ok := required[p]; ok {
+					return next(c)
+				}
+			}
+			return apperr.New("auth.RequirePermission").
+				WithKind(apperr.KindForbidden).
+				WithMessage("forbidden")
+		}
+	}
+}
+
+// HasPermission reports whether claims grant full access or any of the keys.
+func HasPermission(claims *Claims, keys ...string) bool {
+	if claims == nil {
+		return false
+	}
+	if claims.FullAccess {
+		return true
+	}
+	if len(keys) == 0 {
+		return false
+	}
+	set := make(map[string]struct{}, len(claims.Permissions))
+	for _, p := range claims.Permissions {
+		set[p] = struct{}{}
+	}
+	for _, k := range keys {
+		if _, ok := set[k]; ok {
+			return true
+		}
+	}
+	return false
 }

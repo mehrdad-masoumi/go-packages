@@ -94,6 +94,7 @@ func claimsFromToken(token *jwt.Token) (*Claims, error) {
 	}
 	claims := &Claims{
 		Roles:            fc.Roles,
+		Permissions:      fc.Permissions,
 		FullAccess:       fc.FullAccess,
 		RegisteredClaims: fc.RegisteredClaims,
 	}
