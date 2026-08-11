@@ -174,12 +174,22 @@ func NewSigner(cfg SignerConfig) (*Signer, error) {
 }
 
 func (s *Signer) Mint(subject, audience string, scopes []string) (string, error) {
+	tok, _, err := s.Issue(subject, audience, scopes)
+	return tok, err
+}
+
+// Issue creates a service JWT and returns its absolute expiry (for expires_in responses).
+func (s *Signer) Issue(subject, audience string, scopes []string) (string, time.Time, error) {
+	if s == nil {
+		return "", time.Time{}, errors.New("s2s signer: not configured")
+	}
 	subject = strings.TrimSpace(subject)
 	audience = strings.TrimSpace(audience)
 	if subject == "" || audience == "" {
-		return "", errors.New("s2s signer: subject and audience are required")
+		return "", time.Time{}, errors.New("s2s signer: subject and audience are required")
 	}
 	now := time.Now().UTC()
+	exp := now.Add(s.cfg.TTL)
 	claims := Claims{
 		Scopes: append([]string(nil), scopes...),
 		RegisteredClaims: jwtlib.RegisteredClaims{
@@ -188,12 +198,16 @@ func (s *Signer) Mint(subject, audience string, scopes []string) (string, error)
 			Audience:  jwtlib.ClaimStrings{audience},
 			IssuedAt:  jwtlib.NewNumericDate(now),
 			NotBefore: jwtlib.NewNumericDate(now.Add(-5 * time.Second)),
-			ExpiresAt: jwtlib.NewNumericDate(now.Add(s.cfg.TTL)),
+			ExpiresAt: jwtlib.NewNumericDate(exp),
 		},
 	}
 	token := jwtlib.NewWithClaims(jwtlib.SigningMethodEdDSA, claims)
 	token.Header["kid"] = s.cfg.KeyID
-	return token.SignedString(s.cfg.PrivateKey)
+	signed, err := token.SignedString(s.cfg.PrivateKey)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return signed, exp, nil
 }
 
 type identityKey struct{}

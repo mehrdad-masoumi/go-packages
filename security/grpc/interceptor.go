@@ -15,6 +15,9 @@ type Authorizer func(ctx context.Context, fullMethod string, identity s2s.Identi
 
 func UnaryServerInterceptor(verifier s2s.TokenVerifier, authorize Authorizer) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if isPublicGRPCMethod(info.FullMethod) {
+			return handler(ctx, req)
+		}
 		identity, err := authenticate(ctx, verifier)
 		if err != nil {
 			return nil, err
@@ -31,6 +34,9 @@ func UnaryServerInterceptor(verifier s2s.TokenVerifier, authorize Authorizer) gr
 
 func StreamServerInterceptor(verifier s2s.TokenVerifier, authorize Authorizer) grpc.StreamServerInterceptor {
 	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if isPublicGRPCMethod(info.FullMethod) {
+			return handler(srv, stream)
+		}
 		identity, err := authenticate(stream.Context(), verifier)
 		if err != nil {
 			return err
@@ -51,7 +57,7 @@ func RequireAnyScope(methodScopes map[string][]string) Authorizer {
 		if !restricted {
 			return nil
 		}
-		if len(scopes) > 0 && identity.HasAnyScope(scopes...) {
+		if len(scopes) == 0 || identity.HasAnyScope(scopes...) {
 			return nil
 		}
 		return status.Error(codes.PermissionDenied, "forbidden")
@@ -115,3 +121,14 @@ type wrappedServerStream struct {
 }
 
 func (w *wrappedServerStream) Context() context.Context { return w.ctx }
+
+func isPublicGRPCMethod(fullMethod string) bool {
+	switch {
+	case strings.HasPrefix(fullMethod, "/grpc.health.v1.Health/"):
+		return true
+	case strings.HasPrefix(fullMethod, "/grpc.reflection."):
+		return true
+	default:
+		return false
+	}
+}

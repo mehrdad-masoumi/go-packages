@@ -143,7 +143,8 @@ func RequireServiceScopes(scopes ...string) echo.MiddlewareFunc {
 			if err != nil {
 				return err
 			}
-			if len(scopes) == 0 || !identity.HasAnyScope(scopes...) {
+			// Empty scopes means any authenticated service identity is enough.
+			if len(scopes) > 0 && !identity.HasAnyScope(scopes...) {
 				return forbidden("security.echo.RequireServiceScopes")
 			}
 			return next(c)
