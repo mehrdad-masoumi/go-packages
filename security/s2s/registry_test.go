@@ -21,8 +21,25 @@ func TestRegistryAuthenticate(t *testing.T) {
 	if _, ok := reg.Authenticate("user-service", "wrong"); ok {
 		t.Fatal("expected secret rejection")
 	}
-	if !cred.MayRequestAudience("auth-service") || cred.MayRequestAudience("wallet-service") {
-		t.Fatal("audience check failed")
+	if !cred.MayRequestAudience("auth-service") {
+		t.Fatal("expected auth-service audience allowed")
+	}
+	if cred.MayRequestAudience("wallet-service") {
+		t.Fatal("expected wallet-service audience denied")
+	}
+}
+
+func TestMayRequestAudienceEmptyAudiencesRejected(t *testing.T) {
+	cred := ServiceCredential{Name: "orphan", Secret: "s", Audiences: nil}
+	if cred.MayRequestAudience("user-service") {
+		t.Fatal("empty audiences must be fail-closed")
+	}
+}
+
+func TestMayRequestAudienceWildcard(t *testing.T) {
+	cred := ServiceCredential{Name: "admin", Secret: "s", Audiences: []string{"*"}}
+	if !cred.MayRequestAudience("any-service") {
+		t.Fatal("explicit wildcard must allow any audience")
 	}
 }
 

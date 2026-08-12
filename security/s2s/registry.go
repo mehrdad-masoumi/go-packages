@@ -81,16 +81,18 @@ func (r *ServiceRegistry) Lookup(name string) (ServiceCredential, bool) {
 }
 
 // MayRequestAudience reports whether the credential may mint tokens for aud.
+// Empty audiences is fail-closed; use "*" in Audiences for explicit wildcard access.
 func (c ServiceCredential) MayRequestAudience(aud string) bool {
 	aud = strings.TrimSpace(aud)
 	if aud == "" {
 		return false
 	}
 	if len(c.Audiences) == 0 {
-		return true
+		return false
 	}
 	for _, a := range c.Audiences {
-		if strings.TrimSpace(a) == aud {
+		a = strings.TrimSpace(a)
+		if a == "*" || a == aud {
 			return true
 		}
 	}
