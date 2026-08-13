@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/mehrdad-masoumi/go-packages/observability/logger"
+	obsmetrics "github.com/mehrdad-masoumi/go-packages/observability/metrics"
 	"github.com/mehrdad-masoumi/go-packages/security/s2s"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -25,6 +27,7 @@ func UnaryServerInterceptor(verifier s2s.TokenVerifier, authorize Authorizer) gr
 		ctx = s2s.ContextWithIdentity(ctx, identity)
 		if authorize != nil {
 			if err := authorize(ctx, info.FullMethod, identity); err != nil {
+				obsmetrics.RecordS2SAuthFailure(identity.Subject, logger.Service(), s2s.ReasonMissingScope)
 				return nil, status.Error(codes.PermissionDenied, "forbidden")
 			}
 		}
@@ -44,6 +47,7 @@ func StreamServerInterceptor(verifier s2s.TokenVerifier, authorize Authorizer) g
 		ctx := s2s.ContextWithIdentity(stream.Context(), identity)
 		if authorize != nil {
 			if err := authorize(ctx, info.FullMethod, identity); err != nil {
+				obsmetrics.RecordS2SAuthFailure(identity.Subject, logger.Service(), s2s.ReasonMissingScope)
 				return status.Error(codes.PermissionDenied, "forbidden")
 			}
 		}
@@ -85,18 +89,23 @@ func StreamClientInterceptor(source s2s.TokenSource, audience string) grpc.Strea
 }
 
 func authenticate(ctx context.Context, verifier s2s.TokenVerifier) (s2s.Identity, error) {
+	dest := logger.Service()
 	if verifier == nil {
+		obsmetrics.RecordS2SAuthFailure("unknown", dest, s2s.ReasonMissingToken)
 		return s2s.Identity{}, status.Error(codes.Unauthenticated, "unauthenticated service")
 	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
+		obsmetrics.RecordS2SAuthFailure("unknown", dest, s2s.ReasonMissingToken)
 		return s2s.Identity{}, status.Error(codes.Unauthenticated, "unauthenticated service")
 	}
 	raw := first(md.Get("authorization"))
 	identity, err := verifier.Verify(ctx, raw)
 	if err != nil {
+		obsmetrics.RecordS2SAuthFailure("unknown", dest, s2s.ReasonOf(err))
 		return s2s.Identity{}, status.Error(codes.Unauthenticated, "unauthenticated service")
 	}
+	obsmetrics.RecordS2SAuth(identity.Subject, dest)
 	return *identity, nil
 }
 

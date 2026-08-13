@@ -42,7 +42,20 @@ func TestWrongAudienceRejected(t *testing.T) {
 	signer, _ := NewSigner(SignerConfig{Issuer: "auth", KeyID: "k1", PrivateKey: priv, TTL: time.Minute})
 	raw, _ := signer.Mint("kyc-service", "wallet-service", nil)
 	verifier, _ := NewVerifier(VerifierConfig{Issuer: "auth", Audience: "user-service", StaticKeys: []jwks.PublicKeyEntry{{KID: "k1", PublicKey: pub}}})
-	if _, err := verifier.Verify(t.Context(), raw); err == nil {
+	_, err := verifier.Verify(t.Context(), raw)
+	if err == nil {
 		t.Fatal("expected audience rejection")
+	}
+	if ReasonOf(err) != ReasonInvalidAudience {
+		t.Fatalf("reason=%q", ReasonOf(err))
+	}
+}
+
+func TestMissingTokenReason(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(nil)
+	verifier, _ := NewVerifier(VerifierConfig{Issuer: "auth", Audience: "user-service", StaticKeys: []jwks.PublicKeyEntry{{KID: "k1", PublicKey: pub}}})
+	_, err := verifier.Verify(t.Context(), "")
+	if ReasonOf(err) != ReasonMissingToken {
+		t.Fatalf("reason=%q", ReasonOf(err))
 	}
 }

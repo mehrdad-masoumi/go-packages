@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mehrdad-masoumi/go-packages/observability/logger"
+	obsmetrics "github.com/mehrdad-masoumi/go-packages/observability/metrics"
 	"github.com/mehrdad-masoumi/go-packages/observability/tracing"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -184,8 +185,19 @@ func (c *Client) PublishWithConfirm(ctx context.Context, exchange, routingKey st
 }
 
 func (c *Client) PublishWithConfirmHeaders(ctx context.Context, exchange, routingKey string, body []byte, headers amqp.Table) (pubErr error) {
+	started := time.Now()
+	eventType := obsmetrics.EventTypeFromContext(ctx, routingKey)
+	service := logger.Service()
+	defer func() {
+		result := obsmetrics.ResultSuccess
+		if pubErr != nil {
+			result = obsmetrics.ResultError
+		}
+		obsmetrics.RecordPublish(service, eventType, exchange, result, started)
+	}()
 	ch, err := c.Channel()
 	if err != nil {
+		pubErr = err
 		return err
 	}
 	defer ch.Close()

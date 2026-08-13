@@ -5,6 +5,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	apperr "github.com/mehrdad-masoumi/go-packages/errors"
+	"github.com/mehrdad-masoumi/go-packages/observability/logger"
+	obsmetrics "github.com/mehrdad-masoumi/go-packages/observability/metrics"
 	securityjwt "github.com/mehrdad-masoumi/go-packages/security/jwt"
 	"github.com/mehrdad-masoumi/go-packages/security/s2s"
 )
@@ -111,13 +113,20 @@ func HasPermission(claims *securityjwt.Claims, keys ...string) bool {
 func S2S(verifier s2s.TokenVerifier) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			dest := logger.Service()
+			if v, ok := verifier.(*s2s.Verifier); ok && v != nil && v.Audience() != "" {
+				dest = v.Audience()
+			}
 			if verifier == nil {
+				obsmetrics.RecordS2SAuthFailure("unknown", dest, s2s.ReasonMissingToken)
 				return apperr.New("security.echo.S2S").WithKind(apperr.KindUnauthenticated).WithMessage("unauthenticated service")
 			}
 			identity, err := verifier.Verify(c.Request().Context(), bearer(c.Request().Header.Get(echo.HeaderAuthorization)))
 			if err != nil {
+				obsmetrics.RecordS2SAuthFailure("unknown", dest, s2s.ReasonOf(err))
 				return err
 			}
+			obsmetrics.RecordS2SAuth(identity.Subject, dest)
 			c.Set(ServiceIdentityKey, identity)
 			ctx := s2s.ContextWithIdentity(c.Request().Context(), *identity)
 			c.SetRequest(c.Request().WithContext(ctx))
@@ -145,6 +154,7 @@ func RequireServiceScopes(scopes ...string) echo.MiddlewareFunc {
 			}
 			// Empty scopes means any authenticated service identity is enough.
 			if len(scopes) > 0 && !identity.HasAnyScope(scopes...) {
+				obsmetrics.RecordS2SAuthFailure(identity.Subject, logger.Service(), s2s.ReasonMissingScope)
 				return forbidden("security.echo.RequireServiceScopes")
 			}
 			return next(c)

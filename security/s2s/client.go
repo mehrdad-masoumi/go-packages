@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	obsmetrics "github.com/mehrdad-masoumi/go-packages/observability/metrics"
 )
 
 // ServiceTokenClient exchanges client credentials for short-lived service JWTs
@@ -72,10 +74,13 @@ func (c *ServiceTokenClient) Token(ctx context.Context, audience string) (string
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.token != "" && c.tokenAudience == aud && time.Now().Before(c.expiresAt.Add(-30*time.Second)) {
+		obsmetrics.RecordTokenCacheHit(c.service, aud)
 		return c.token, nil
 	}
+	obsmetrics.RecordTokenRequest(c.service, aud)
 	tok, exp, err := c.fetch(ctx, aud)
 	if err != nil {
+		obsmetrics.RecordTokenRequestFailure(c.service, aud, ReasonTokenFetchFailed)
 		return "", err
 	}
 	c.token = tok

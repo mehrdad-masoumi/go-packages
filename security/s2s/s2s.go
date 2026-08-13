@@ -109,13 +109,20 @@ func (v *Verifier) Warm(ctx context.Context) error {
 	return nil
 }
 
+func (v *Verifier) Audience() string {
+	if v == nil {
+		return ""
+	}
+	return v.cfg.Audience
+}
+
 func (v *Verifier) Verify(ctx context.Context, rawToken string) (*Identity, error) {
 	if v == nil {
-		return nil, unauthenticated()
+		return nil, unauthenticatedWith(ReasonMissingToken, nil)
 	}
 	rawToken = trimBearer(rawToken)
 	if rawToken == "" {
-		return nil, unauthenticated()
+		return nil, unauthenticatedWith(ReasonMissingToken, nil)
 	}
 	_ = v.cache.EnsureFresh(ctx)
 	parser := jwtlib.NewParser(
@@ -133,15 +140,15 @@ func (v *Verifier) Verify(ctx context.Context, rawToken string) (*Identity, erro
 		return v.cache.Lookup(ctx, kid)
 	})
 	if err != nil {
-		return nil, unauthenticated()
+		return nil, unauthenticatedWith(classifyJWTError(err), err)
 	}
 	claims, ok := token.Claims.(*Claims)
 	if !ok || !token.Valid || strings.TrimSpace(claims.Subject) == "" {
-		return nil, unauthenticated()
+		return nil, unauthenticatedWith(ReasonInvalidSignature, nil)
 	}
 	if len(v.allowed) > 0 {
 		if _, ok := v.allowed[claims.Subject]; !ok {
-			return nil, apperr.New("security.s2s.Verify").WithKind(apperr.KindForbidden).WithMessage("service not allowed")
+			return nil, forbiddenUnknownService()
 		}
 	}
 	return &Identity{Subject: claims.Subject, Audience: []string(claims.Audience), Scopes: append([]string(nil), claims.Scopes...)}, nil
@@ -240,6 +247,98 @@ func trimBearer(raw string) string {
 	return raw
 }
 
+const (
+	ReasonMissingToken     = "missing_token"
+	ReasonExpired          = "expired"
+	ReasonInvalidSignature = "invalid_signature"
+	ReasonInvalidAudience  = "invalid_audience"
+	ReasonInvalidIssuer    = "invalid_issuer"
+	ReasonMissingScope     = "missing_scope"
+	ReasonUnknownService   = "unknown_service"
+	ReasonTokenFetchFailed = "token_fetch_failed"
+)
+
+// AuthFailure wraps an S2S auth error with a bounded Prometheus reason.
+type AuthFailure struct {
+	Reason string
+	err    error
+}
+
+func (e *AuthFailure) Error() string {
+	if e == nil {
+		return "unauthenticated service"
+	}
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return "unauthenticated service"
+}
+
+func (e *AuthFailure) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func ReasonOf(err error) string {
+	var af *AuthFailure
+	if errors.As(err, &af) && af.Reason != "" {
+		return af.Reason
+	}
+	var re *apperr.RichError
+	if errors.As(err, &re) {
+		switch re.Kind() {
+		case apperr.KindForbidden:
+			return ReasonMissingScope
+		case apperr.KindUnauthenticated:
+			return ReasonInvalidSignature
+		}
+	}
+	return ReasonInvalidSignature
+}
+
+func classifyJWTError(err error) string {
+	if err == nil {
+		return ReasonInvalidSignature
+	}
+	switch {
+	case errors.Is(err, jwtlib.ErrTokenExpired):
+		return ReasonExpired
+	case errors.Is(err, jwtlib.ErrTokenInvalidAudience):
+		return ReasonInvalidAudience
+	case errors.Is(err, jwtlib.ErrTokenInvalidIssuer):
+		return ReasonInvalidIssuer
+	case errors.Is(err, jwtlib.ErrTokenSignatureInvalid):
+		return ReasonInvalidSignature
+	default:
+		msg := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(msg, "audience"):
+			return ReasonInvalidAudience
+		case strings.Contains(msg, "issuer"):
+			return ReasonInvalidIssuer
+		case strings.Contains(msg, "expired"):
+			return ReasonExpired
+		default:
+			return ReasonInvalidSignature
+		}
+	}
+}
+
 func unauthenticated() error {
-	return apperr.New("security.s2s.Verify").WithKind(apperr.KindUnauthenticated).WithMessage("unauthenticated service")
+	return unauthenticatedWith(ReasonInvalidSignature, nil)
+}
+
+func unauthenticatedWith(reason string, cause error) error {
+	re := apperr.New("security.s2s.Verify").WithKind(apperr.KindUnauthenticated).WithMessage("unauthenticated service")
+	if cause != nil {
+		re = re.WithErr(cause)
+	}
+	return &AuthFailure{Reason: reason, err: re}
+}
+
+func forbiddenUnknownService() error {
+	re := apperr.New("security.s2s.Verify").WithKind(apperr.KindForbidden).WithMessage("service not allowed")
+	return &AuthFailure{Reason: ReasonUnknownService, err: re}
 }

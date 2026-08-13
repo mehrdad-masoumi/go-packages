@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/mehrdad-masoumi/go-packages/observability/logger"
+	obsmetrics "github.com/mehrdad-masoumi/go-packages/observability/metrics"
 )
 
 type Event struct {
@@ -125,7 +128,10 @@ func (r *Relay) tick(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		obsmetrics.RecordOutboxDispatch(logger.Service(), event.Exchange, event.RoutingKey, obsmetrics.ResultClaimed, time.Time{})
+		started := time.Now()
 		if err := r.publishOne(ctx, event); err != nil {
+			obsmetrics.RecordOutboxDispatch(logger.Service(), event.Exchange, event.RoutingKey, obsmetrics.ResultFailed, started)
 			if r.cfg.Hooks.OnPublishFailed != nil {
 				r.cfg.Hooks.OnPublishFailed(event, err)
 			}
@@ -133,10 +139,11 @@ func (r *Relay) tick(ctx context.Context) {
 			continue
 		}
 		if err := r.store.MarkPublished(ctx, event.ID); err != nil {
-			// At-least-once delivery means this can be retried and duplicated; consumers must be idempotent.
+			obsmetrics.RecordOutboxDispatch(logger.Service(), event.Exchange, event.RoutingKey, obsmetrics.ResultFailed, started)
 			r.report(ctx, "mark_published", err, "event_id", event.ID)
 			continue
 		}
+		obsmetrics.RecordOutboxDispatch(logger.Service(), event.Exchange, event.RoutingKey, obsmetrics.ResultDispatched, started)
 		if r.cfg.Hooks.OnPublished != nil {
 			r.cfg.Hooks.OnPublished(event)
 		}

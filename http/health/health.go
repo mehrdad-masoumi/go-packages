@@ -33,8 +33,13 @@ func Register(e *echo.Echo, cfg Config, deps ...NamedChecker) {
 	if cfg.ReadinessPath == "" {
 		cfg.ReadinessPath = "/ready"
 	}
-	e.GET(cfg.LivenessPath, func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
+	liveness := func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) }
+	e.GET(cfg.LivenessPath, liveness)
 	e.HEAD(cfg.LivenessPath, func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	if cfg.LivenessPath != "/health" {
+		e.GET("/health", liveness)
+		e.HEAD("/health", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	}
 	e.GET(cfg.ReadinessPath, func(c echo.Context) error {
 		for _, dep := range deps {
 			if dep.Checker == nil {

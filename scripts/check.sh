@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-modules=(errors observability security http postgres messaging)
+modules=(errors observability security http postgres messaging runtime)
 for module in "${modules[@]}"; do
   echo "==> $module"
   (

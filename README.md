@@ -10,10 +10,11 @@ This repository is intentionally a **single Git repository with multiple Go modu
 |---|---|
 | `errors` | Transport-agnostic application error primitives |
 | `security` | User JWT/JWKS + service-to-service identity for Echo/gRPC |
-| `observability` | Structured logs and OpenTelemetry |
+| `observability` | Structured logs, OpenTelemetry, and shared Prometheus metric contract |
 | `http` | Echo server/middleware/health/metrics |
 | `postgres` | PostgreSQL connection/pool/instrumentation/migrations |
 | `messaging` | RabbitMQ lifecycle/tracing + generic outbox relay |
+| `runtime` | Application lifecycle, runners, and graceful shutdown |
 
 `broker-contract` remains a separate repository/module: it contains **business integration contracts**, while this repository contains reusable technical infrastructure.
 
@@ -24,10 +25,11 @@ errors
 
 observability
 
-security  -> errors
+security  -> errors + observability
 http      -> errors + observability
 postgres  -> OTEL primitives only
 messaging -> observability
+runtime   -> stdlib only
 ```
 
 No module may import broker service `internal` packages or broker domain models.
@@ -54,6 +56,7 @@ observability/v0.1.0
 http/v0.1.0
 postgres/v0.1.0
 messaging/v0.1.0
+runtime/v0.1.0
 ```
 
 A service that only upgrades `security` does not need to upgrade `postgres` or `messaging`.

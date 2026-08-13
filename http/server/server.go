@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
+	httpmetrics "github.com/mehrdad-masoumi/go-packages/http/metrics"
 	httpmw "github.com/mehrdad-masoumi/go-packages/http/middleware"
 	"github.com/mehrdad-masoumi/go-packages/observability/logger"
 )
@@ -39,6 +40,7 @@ func New(cfg Config) (*echo.Echo, error) {
 	}
 
 	e.Use(echomw.Recover())
+	e.Use(httpmetrics.Middleware(cfg.ServiceName))
 	e.Use(httpmw.RequestID())
 	if !cfg.DisableTracing {
 		e.Use(httpmw.Tracing(cfg.ServiceName))

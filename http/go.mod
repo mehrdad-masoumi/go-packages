@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/mehrdad-masoumi/go-packages/errors v0.1.0
-	github.com/mehrdad-masoumi/go-packages/observability v0.1.0
+	github.com/mehrdad-masoumi/go-packages/observability v0.2.0
 	github.com/prometheus/client_golang v1.23.2
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.63.0
 )
@@ -35,4 +35,9 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
+)
+
+replace (
+	github.com/mehrdad-masoumi/go-packages/errors => ../errors
+	github.com/mehrdad-masoumi/go-packages/observability => ../observability
 )
