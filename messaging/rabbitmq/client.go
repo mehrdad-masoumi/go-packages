@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mehrdad-masoumi/go-packages/observability/logger"
@@ -18,6 +19,8 @@ const (
 	defaultConfirmTimeout = 5 * time.Second
 	defaultReconnectDelay = 5 * time.Second
 )
+
+var ErrClosed = errors.New("rabbitmq: client closed")
 
 type TopologySetup func(ch *amqp.Channel) error
 
@@ -38,6 +41,12 @@ type Client struct {
 	conn      *amqp.Connection
 	wg        sync.WaitGroup
 	closeOnce sync.Once
+	closing   atomic.Bool
+
+	// Optional test hooks. Production code leaves these nil.
+	notifyClose func() <-chan *amqp.Error
+	reconnect   func() error
+	reconnects  atomic.Int32
 }
 
 func New(ctx context.Context, cfg Config, setup TopologySetup) (*Client, error) {
@@ -65,12 +74,23 @@ func New(ctx context.Context, cfg Config, setup TopologySetup) (*Client, error) 
 		cancel()
 		return nil, err
 	}
-	client.wg.Add(1)
-	go client.reconnectLoop()
+	client.startReconnectLoop()
 	return client, nil
 }
 
+func (c *Client) startReconnectLoop() {
+	c.wg.Add(1)
+	go c.reconnectLoop()
+}
+
+func (c *Client) isClosing() bool {
+	return c.closing.Load() || c.ctx.Err() != nil
+}
+
 func (c *Client) connectAndSetup() error {
+	if c.isClosing() {
+		return ErrClosed
+	}
 	conn, err := amqp.DialConfig(c.cfg.URL, amqp.Config{
 		Dial: func(network, addr string) (net.Conn, error) {
 			return net.DialTimeout(network, addr, c.cfg.DialTimeout)
@@ -78,6 +98,10 @@ func (c *Client) connectAndSetup() error {
 	})
 	if err != nil {
 		return fmt.Errorf("rabbitmq dial: %w", err)
+	}
+	if c.isClosing() {
+		_ = conn.Close()
+		return ErrClosed
 	}
 	if c.setup != nil {
 		ch, chErr := conn.Channel()
@@ -92,7 +116,16 @@ func (c *Client) connectAndSetup() error {
 			return fmt.Errorf("rabbitmq topology: %w", setupErr)
 		}
 	}
+	if c.isClosing() {
+		_ = conn.Close()
+		return ErrClosed
+	}
 	c.mu.Lock()
+	if c.closing.Load() {
+		c.mu.Unlock()
+		_ = conn.Close()
+		return ErrClosed
+	}
 	old := c.conn
 	c.conn = conn
 	c.mu.Unlock()
@@ -105,20 +138,22 @@ func (c *Client) connectAndSetup() error {
 func (c *Client) reconnectLoop() {
 	defer c.wg.Done()
 	for {
-		conn := c.currentConnection()
-		if conn == nil {
+		if c.isClosing() {
+			return
+		}
+		closeCh := c.closeNotifications()
+		if closeCh == nil {
 			if !c.waitReconnect() {
 				return
 			}
 			c.tryReconnect()
 			continue
 		}
-		closeCh := conn.NotifyClose(make(chan *amqp.Error, 1))
 		select {
 		case <-c.ctx.Done():
 			return
 		case err := <-closeCh:
-			if c.ctx.Err() != nil {
+			if c.isClosing() {
 				return
 			}
 			if err != nil {
@@ -129,9 +164,23 @@ func (c *Client) reconnectLoop() {
 	}
 }
 
+func (c *Client) closeNotifications() <-chan *amqp.Error {
+	if c.notifyClose != nil {
+		return c.notifyClose()
+	}
+	conn := c.currentConnection()
+	if conn == nil {
+		return nil
+	}
+	return conn.NotifyClose(make(chan *amqp.Error, 1))
+}
+
 func (c *Client) tryReconnect() {
-	for c.ctx.Err() == nil {
-		if err := c.connectAndSetup(); err != nil {
+	for !c.isClosing() {
+		if err := c.doReconnect(); err != nil {
+			if c.isClosing() {
+				return
+			}
 			logger.Error(c.ctx, "rabbitmq reconnect failed", "error", err.Error())
 			if !c.waitReconnect() {
 				return
@@ -143,15 +192,19 @@ func (c *Client) tryReconnect() {
 	}
 }
 
-func (c *Client) waitReconnect() bool {
-	timer := time.NewTimer(c.cfg.ReconnectDelay)
-	defer timer.Stop()
-	select {
-	case <-c.ctx.Done():
-		return false
-	case <-timer.C:
-		return true
+func (c *Client) doReconnect() error {
+	if c.isClosing() {
+		return ErrClosed
 	}
+	c.reconnects.Add(1)
+	if c.reconnect != nil {
+		return c.reconnect()
+	}
+	return c.connectAndSetup()
+}
+
+func (c *Client) waitReconnect() bool {
+	return Wait(c.ctx, c.cfg.ReconnectDelay) == nil && !c.closing.Load()
 }
 
 func (c *Client) currentConnection() *amqp.Connection {
@@ -161,6 +214,9 @@ func (c *Client) currentConnection() *amqp.Connection {
 }
 
 func (c *Client) Channel() (*amqp.Channel, error) {
+	if c.isClosing() {
+		return nil, ErrClosed
+	}
 	conn := c.currentConnection()
 	if conn == nil || conn.IsClosed() {
 		return nil, errors.New("rabbitmq not connected")
@@ -213,8 +269,11 @@ func (c *Client) PublishWithConfirmHeaders(ctx context.Context, exchange, routin
 	defer cancel()
 
 	if err := ch.PublishWithContext(pubCtx, exchange, routingKey, false, false, amqp.Publishing{
-		ContentType: c.cfg.ContentType, DeliveryMode: amqp.Persistent, Body: body,
-		Timestamp: time.Now().UTC(), Headers: headers,
+		ContentType:  c.cfg.ContentType,
+		DeliveryMode: amqp.Persistent,
+		Body:         body,
+		Timestamp:    time.Now().UTC(),
+		Headers:      headers,
 	}); err != nil {
 		pubErr = err
 		return fmt.Errorf("rabbitmq publish: %w", err)
@@ -256,6 +315,7 @@ func (c *Client) Ping(ctx context.Context) error {
 func (c *Client) Close() error {
 	var closeErr error
 	c.closeOnce.Do(func() {
+		c.closing.Store(true)
 		c.cancel()
 		c.mu.Lock()
 		conn := c.conn
@@ -265,6 +325,13 @@ func (c *Client) Close() error {
 			closeErr = conn.Close()
 		}
 		c.wg.Wait()
+		c.mu.Lock()
+		leftover := c.conn
+		c.conn = nil
+		c.mu.Unlock()
+		if leftover != nil {
+			_ = leftover.Close()
+		}
 	})
 	return closeErr
 }
