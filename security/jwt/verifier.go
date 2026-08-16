@@ -31,6 +31,11 @@ type VerifierConfig struct {
 
 	Leeway time.Duration
 
+	// RequiredTokenUse is the expected token_use claim. Resource services must
+	// require TokenUseAccess so refresh JWTs cannot be presented as access tokens.
+	// Empty defaults to TokenUseAccess.
+	RequiredTokenUse string
+
 	// Deprecated migration-only fallback. Production callers should leave this false.
 	AllowLegacyHS256  bool
 	LegacyHS256Secret string
@@ -63,6 +68,9 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 	}
 	if cfg.Leeway <= 0 {
 		cfg.Leeway = 30 * time.Second
+	}
+	if strings.TrimSpace(cfg.RequiredTokenUse) == "" {
+		cfg.RequiredTokenUse = TokenUseAccess
 	}
 	cache := jwks.NewCache(cfg.JWKSURL, cfg.JWKSCacheTTL, cfg.HTTPClient)
 	cache.Seed(cfg.StaticKeys)
@@ -136,7 +144,7 @@ func (v *Verifier) verifyEdDSA(ctx context.Context, rawToken string) (*Claims, e
 	if err != nil {
 		return nil, mapJWTError(err)
 	}
-	return claimsFromToken(token)
+	return v.enforceTokenUse(claimsFromToken(token))
 }
 
 func (v *Verifier) verifyLegacyHS256(rawToken string) (*Claims, error) {
@@ -154,7 +162,21 @@ func (v *Verifier) verifyLegacyHS256(rawToken string) (*Claims, error) {
 	if err != nil {
 		return nil, mapJWTError(err)
 	}
-	return claimsFromToken(token)
+	return v.enforceTokenUse(claimsFromToken(token))
+}
+
+func (v *Verifier) enforceTokenUse(claims *Claims, err error) (*Claims, error) {
+	if err != nil {
+		return nil, err
+	}
+	required := TokenUseAccess
+	if v != nil && strings.TrimSpace(v.cfg.RequiredTokenUse) != "" {
+		required = strings.TrimSpace(v.cfg.RequiredTokenUse)
+	}
+	if claims.TokenUse != required {
+		return nil, unauthenticated("invalid token use")
+	}
+	return claims, nil
 }
 
 func claimsFromToken(token *jwtlib.Token) (*Claims, error) {
@@ -179,6 +201,7 @@ func claimsFromToken(token *jwtlib.Token) (*Claims, error) {
 	if strings.TrimSpace(out.UserID) == "" {
 		return nil, unauthenticated("invalid token")
 	}
+	out.TokenUse = strings.TrimSpace(fc.TokenUse)
 	return out, nil
 }
 

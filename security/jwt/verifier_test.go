@@ -9,10 +9,11 @@ import (
 	"github.com/mehrdad-masoumi/go-packages/security/jwks"
 )
 
-func signedUserToken(t *testing.T, priv ed25519.PrivateKey, kid, iss, aud string, exp time.Time) string {
+func signedUserToken(t *testing.T, priv ed25519.PrivateKey, kid, iss, aud, tokenUse string, exp time.Time) string {
 	t.Helper()
 	claims := flexibleClaims{
-		UserID: "42",
+		UserID:   "42",
+		TokenUse: tokenUse,
 		RegisteredClaims: jwtlib.RegisteredClaims{
 			Issuer:    iss,
 			Audience:  jwtlib.ClaimStrings{aud},
@@ -38,13 +39,32 @@ func TestVerifierAudienceAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := v.Verify(t.Context(), signedUserToken(t, priv, "k1", "auth", "broker", time.Now().Add(time.Minute))); err != nil {
+	if _, err := v.Verify(t.Context(), signedUserToken(t, priv, "k1", "auth", "broker", TokenUseAccess, time.Now().Add(time.Minute))); err != nil {
 		t.Fatalf("valid token: %v", err)
 	}
-	if _, err := v.Verify(t.Context(), signedUserToken(t, priv, "k1", "auth", "other", time.Now().Add(time.Minute))); err == nil {
+	if _, err := v.Verify(t.Context(), signedUserToken(t, priv, "k1", "auth", "other", TokenUseAccess, time.Now().Add(time.Minute))); err == nil {
 		t.Fatal("expected invalid audience")
 	}
-	if _, err := v.Verify(t.Context(), signedUserToken(t, priv, "k1", "auth", "broker", time.Now().Add(-time.Minute))); err == nil {
+	if _, err := v.Verify(t.Context(), signedUserToken(t, priv, "k1", "auth", "broker", TokenUseAccess, time.Now().Add(-time.Minute))); err == nil {
 		t.Fatal("expected expired token")
+	}
+}
+
+func TestVerifierRejectsRefreshTokenUse(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	v, err := NewVerifier(VerifierConfig{
+		Issuer:     "auth",
+		Audience:   "broker",
+		StaticKeys: []jwks.PublicKeyEntry{{KID: "k1", PublicKey: pub}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := signedUserToken(t, priv, "k1", "auth", "broker", TokenUseRefresh, time.Now().Add(time.Minute))
+	if _, err := v.Verify(t.Context(), raw); err == nil {
+		t.Fatal("resource verifier must reject refresh tokens")
+	}
+	if _, err := v.Verify(t.Context(), signedUserToken(t, priv, "k1", "auth", "broker", "", time.Now().Add(time.Minute))); err == nil {
+		t.Fatal("resource verifier must reject tokens without token_use")
 	}
 }
