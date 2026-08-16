@@ -149,6 +149,33 @@ func TestRecaptchaV3_ActionMismatch(t *testing.T) {
 	}
 }
 
+func TestNewFromConfig_Disabled(t *testing.T) {
+	v, err := NewFromConfig(true, false, "", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Verify(context.Background(), "", VerifyOptions{}); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
+func TestNewFromConfig_ProductionRequiresSecret(t *testing.T) {
+	_, err := NewFromConfig(true, true, "", 0.5, "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestNewFromConfig_DevNoopWithoutSecret(t *testing.T) {
+	v, err := NewFromConfig(false, true, "", 0.5, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Verify(context.Background(), "", VerifyOptions{}); err == nil {
+		t.Fatal("enabled noop should require token")
+	}
+}
+
 func TestNewRecaptchaV3_RequiresSecret(t *testing.T) {
 	_, err := NewRecaptchaV3(Config{Enabled: true})
 	if err == nil {

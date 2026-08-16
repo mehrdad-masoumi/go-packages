@@ -247,3 +247,27 @@ func EnsureProductionSafe(isProduction, captchaEnabled bool, v Verifier) error {
 	}
 	return nil
 }
+
+// NewFromConfig builds the appropriate verifier from service config.
+// When disabled, returns NoopVerifier{Enabled:false}.
+// When enabled without secret in non-production, returns NoopVerifier{Enabled:true} (presence check only).
+// Production + enabled requires a real secret and RecaptchaV3.
+func NewFromConfig(isProduction, enabled bool, secret string, minScore float64, expectedHost string) (Verifier, error) {
+	if !enabled {
+		return NoopVerifier{Enabled: false}, nil
+	}
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		if isProduction {
+			return nil, errors.New("captcha: secret is required in production when captcha is enabled")
+		}
+		v := NoopVerifier{Enabled: true}
+		return v, EnsureProductionSafe(isProduction, enabled, v)
+	}
+	return NewRecaptchaV3(Config{
+		Secret:       secret,
+		Enabled:      true,
+		MinScore:     minScore,
+		ExpectedHost: expectedHost,
+	})
+}
