@@ -41,6 +41,21 @@ func RecordDLQ(service, eventType string) {
 	msgDLQTotal.WithLabelValues(SanitizeService(service), SanitizeEventType(eventType)).Inc()
 }
 
+func RecordUnroutable(service, eventType, exchange string) {
+	ensure()
+	msgUnroutableTotal.WithLabelValues(SanitizeService(service), SanitizeEventType(eventType), SanitizeExchange(exchange)).Inc()
+}
+
+func RecordConfirmTimeout(service, eventType, exchange string) {
+	ensure()
+	msgConfirmTimeout.WithLabelValues(SanitizeService(service), SanitizeEventType(eventType), SanitizeExchange(exchange)).Inc()
+}
+
+func RecordDuplicate(service, eventType string) {
+	ensure()
+	consumerDuplicate.WithLabelValues(SanitizeService(service), SanitizeEventType(eventType)).Inc()
+}
+
 func SetOldestMessageAge(service, eventType string, age time.Duration) {
 	ensure()
 	if age < 0 {

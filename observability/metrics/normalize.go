@@ -55,6 +55,12 @@ var allowedResults = map[string]struct{}{
 	ResultDispatched: {},
 	ResultFailed:     {},
 	ResultRetried:    {},
+	ResultUnroutable: {},
+	ResultDuplicate:  {},
+	ResultExhausted:  {},
+	ResultOpen:       {},
+	ResultHalfOpen:   {},
+	ResultClosed:     {},
 }
 
 var allowedBusinessOps = map[string]struct{}{

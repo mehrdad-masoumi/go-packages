@@ -19,22 +19,38 @@ var (
 	s2sTokenFailures *prometheus.CounterVec
 	s2sTokenCacheHit *prometheus.CounterVec
 
-	msgPublishTotal *prometheus.CounterVec
-	msgPublishFails *prometheus.CounterVec
-	msgPublishDur   *prometheus.HistogramVec
-	msgConsumeTotal *prometheus.CounterVec
-	msgConsumeFails *prometheus.CounterVec
-	msgProcessDur   *prometheus.HistogramVec
-	msgRetryTotal   *prometheus.CounterVec
-	msgDLQTotal     *prometheus.CounterVec
-	msgOldestAge    *prometheus.GaugeVec
+	msgPublishTotal    *prometheus.CounterVec
+	msgPublishFails    *prometheus.CounterVec
+	msgPublishDur      *prometheus.HistogramVec
+	msgConsumeTotal    *prometheus.CounterVec
+	msgConsumeFails    *prometheus.CounterVec
+	msgProcessDur      *prometheus.HistogramVec
+	msgRetryTotal      *prometheus.CounterVec
+	msgDLQTotal        *prometheus.CounterVec
+	msgOldestAge       *prometheus.GaugeVec
+	msgUnroutableTotal *prometheus.CounterVec
+	msgConfirmTimeout  *prometheus.CounterVec
 
-	outboxPending  *prometheus.GaugeVec
-	outboxFailed   *prometheus.GaugeVec
-	outboxOldest   *prometheus.GaugeVec
-	outboxDispatch *prometheus.CounterVec
-	outboxDispFail *prometheus.CounterVec
-	outboxDispDur  *prometheus.HistogramVec
+	outboxPending   *prometheus.GaugeVec
+	outboxFailed    *prometheus.GaugeVec
+	outboxExhausted *prometheus.GaugeVec
+	outboxOldest    *prometheus.GaugeVec
+	outboxDispatch  *prometheus.CounterVec
+	outboxDispFail  *prometheus.CounterVec
+	outboxDispDur   *prometheus.HistogramVec
+
+	consumerDuplicate *prometheus.CounterVec
+	reconMismatch     *prometheus.CounterVec
+	reconRepaired     *prometheus.CounterVec
+	reconScanned      *prometheus.CounterVec
+	reconFailed       *prometheus.CounterVec
+	ambiguousOps      *prometheus.CounterVec
+	circuitBreaker    *prometheus.GaugeVec
+	circuitBreakerTx  *prometheus.CounterVec
+	clientFailures    *prometheus.CounterVec
+	clientRetries     *prometheus.CounterVec
+	clientTimeouts    *prometheus.CounterVec
+	clientGiveUp      *prometheus.CounterVec
 
 	businessTotal *prometheus.CounterVec
 	businessFails *prometheus.CounterVec
@@ -129,6 +145,16 @@ func ensure() {
 			Help: "Age in seconds of the oldest observed in-flight message (application view).",
 		}, []string{LabelService, LabelEventType})
 
+		msgUnroutableTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: MessagingUnroutableTotal,
+			Help: "RabbitMQ publishes returned as unroutable (mandatory, no matching queue).",
+		}, []string{LabelService, LabelEventType, LabelExchange})
+
+		msgConfirmTimeout = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: MessagingConfirmTimeoutTotal,
+			Help: "RabbitMQ publisher confirm timeouts.",
+		}, []string{LabelService, LabelEventType, LabelExchange})
+
 		outboxPending = promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: OutboxPendingTotal,
 			Help: "Unpublished outbox rows.",
@@ -137,6 +163,11 @@ func ensure() {
 		outboxFailed = promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: OutboxFailedTotal,
 			Help: "Failed outbox rows waiting for retry.",
+		}, []string{LabelService, LabelDestination, LabelEventType})
+
+		outboxExhausted = promauto.NewGaugeVec(prometheus.GaugeOpts{
+			Name: OutboxExhaustedTotal,
+			Help: "Outbox rows that exhausted retries and require operator replay.",
 		}, []string{LabelService, LabelDestination, LabelEventType})
 
 		outboxOldest = promauto.NewGaugeVec(prometheus.GaugeOpts{
@@ -159,6 +190,66 @@ func ensure() {
 			Help:    "Outbox single-event dispatch duration in seconds.",
 			Buckets: rpcBuckets(),
 		}, []string{LabelService, LabelDestination, LabelEventType})
+
+		consumerDuplicate = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ConsumerDuplicateTotal,
+			Help: "Consumer deliveries skipped because the event was already processed.",
+		}, []string{LabelService, LabelEventType})
+
+		reconMismatch = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ReconciliationMismatchTotal,
+			Help: "Reconciliation mismatches detected (business state without expected delivery).",
+		}, []string{LabelService, LabelOperation})
+
+		reconRepaired = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ReconciliationRepairedTotal,
+			Help: "Reconciliation repairs that requeued missing delivery work.",
+		}, []string{LabelService, LabelOperation})
+
+		reconScanned = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ReconciliationScannedTotal,
+			Help: "Items examined by a reconciliation pass.",
+		}, []string{LabelService, LabelOperation})
+
+		reconFailed = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ReconciliationFailedTotal,
+			Help: "Reconciliation pass items that could not be resolved and require operator attention.",
+		}, []string{LabelService, LabelOperation})
+
+		ambiguousOps = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: AmbiguousOperationsTotal,
+			Help: "Financial operations whose downstream outcome was unknown (e.g. timeout) and were kept pending instead of guessed.",
+		}, []string{LabelService, LabelOperation})
+
+		circuitBreaker = promauto.NewGaugeVec(prometheus.GaugeOpts{
+			Name: CircuitBreakerState,
+			Help: "Circuit breaker state: 0=closed, 1=half_open, 2=open.",
+		}, []string{LabelService, LabelDestination})
+
+		circuitBreakerTx = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: CircuitBreakerTransitions,
+			Help: "Circuit breaker state transitions by resulting state (open, half_open, closed).",
+		}, []string{LabelService, LabelDestination, LabelResult})
+
+		clientFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ClientFailuresTotal,
+			Help: "Outbound service-to-service failures (timeouts, 5xx, unavailable).",
+		}, []string{LabelSource, LabelDestination, LabelProtocol, LabelErrorType})
+
+		clientRetries = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ClientRetriesTotal,
+			Help: "Outbound service-to-service request retries actually performed.",
+		}, []string{LabelSource, LabelDestination, LabelProtocol})
+
+		clientTimeouts = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ClientTimeoutsTotal,
+			Help: "Outbound service-to-service request attempts that timed out.",
+		}, []string{LabelSource, LabelDestination, LabelProtocol})
+
+		clientGiveUp = promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: ClientGiveUpTotal,
+			Help: "Outbound service-to-service calls that failed after exhausting the retry policy or were rejected by the breaker.",
+		}, []string{LabelSource, LabelDestination, LabelProtocol, LabelErrorType})
 
 		businessTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 			Name: BusinessOperationTotal,

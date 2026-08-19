@@ -88,6 +88,9 @@ func (t Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	status, errType := classifyHTTP(resp, err)
 	clientRequests.WithLabelValues(source, dest, ProtocolHTTP, op, status, errType).Inc()
 	clientDuration.WithLabelValues(source, dest, ProtocolHTTP, op).Observe(dur)
+	if status != StatusSuccess {
+		clientFailures.WithLabelValues(source, dest, ProtocolHTTP, errType).Inc()
+	}
 	return resp, err
 }
 
